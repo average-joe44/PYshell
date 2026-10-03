@@ -13,6 +13,7 @@ import keyboard
 import time
 import glob
 import re
+import socket
 
 class Shell:
     def __init__(self):
@@ -32,7 +33,8 @@ class Shell:
             "exec", "pk", "pdk", "plist",
             "mf", "cf", "rf",
             "play",
-            "math"
+            "math",
+            "confip"
         ]
 
     def Get_Input(self):
@@ -73,7 +75,14 @@ class Shell:
         print()
 
     def WHO(self):
-        print(getpass.getuser())
+        comp_name = socket.gethostname()
+        host_name = getpass.getuser()
+        print(f"{host_name}/{comp_name}")
+
+    def CONFIP(self):
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        print(f"Local ip: {local_ip}")
 
     def PD(self):
         cwd = os.getcwd()
@@ -320,7 +329,7 @@ class Shell:
         except FileExistsError:
             print(f"'{src}' already exist")
         
-    def PLAY(self, command):
+    def PLAY_AUDIO(self, command):
         try:
             pygame.init()
             pygame.mixer.init()
@@ -446,7 +455,7 @@ class Shell:
                 mime = magic.from_file(command, mime=True)
 
                 if mime.startswith("audio/"):
-                    self.PLAY(command)
+                    self.PLAY_AUDIO(command)
                 elif mime.startswith("video/"):
                     self.PLAY_VIDEO(command)
                 else:
@@ -503,6 +512,7 @@ class Shell:
                 -cf/mf     --> copy (cf) or move (mf) a file into a specified folder (with '->')
                 -play      --> play a video/audio file
                 -math      --> calculate numbers directly on terminal
+                -confip    --> configure local ip address
                 """'''.strip('"'))
 
             elif command[0] == "who?":
@@ -561,6 +571,9 @@ class Shell:
 
             elif command[0] == "math":
                 self.MATH(command)
+
+            elif command[0] == "confip":
+                self.CONFIP()
 
         except TypeError:
             pass
