@@ -33,8 +33,7 @@ class Shell:
             "exec", "pk", "pdk", "plist",
             "mf", "cf", "rf",
             "play",
-            "math",
-            "confip"
+            "math"
         ]
 
     def Get_Input(self):
@@ -78,11 +77,6 @@ class Shell:
         comp_name = socket.gethostname()
         host_name = getpass.getuser()
         print(f"{host_name}/{comp_name}")
-
-    def CONFIP(self):
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        print(f"Local ip: {local_ip}")
 
     def PD(self):
         cwd = os.getcwd()
@@ -571,9 +565,6 @@ class Shell:
 
             elif command[0] == "math":
                 self.MATH(command)
-
-            elif command[0] == "confip":
-                self.CONFIP()
 
         except TypeError:
             pass
