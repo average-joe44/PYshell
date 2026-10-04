@@ -15,6 +15,7 @@ import re
 import socket
 import cv2
 import argparse
+import pathlib
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -177,11 +178,13 @@ class Shell:
                 print(f"{e}")
 
     def REM(self, command):
-        to_remove = command[1:]
+        to_remove = " ".join(command[1:])
 
         if not to_remove:
             print(" specify a file to remove")
             return
+
+        to_remove = [to_remove]
 
         for rem in to_remove:
             try:
@@ -202,14 +205,19 @@ class Shell:
                                     print(f"{e}")
                         else:
                             return
-                elif os.path.exists(rem):
-                    if os.path.isfile(rem):
-                        print(f"removing '{rem}' file...")
-                        os.remove(rem)
+                else:
+                    root_path = pathlib.Path.cwd()
+                    matches = [p for p in root_path.rglob(rem) if p.is_file()]
+
+                    if matches:
+                        for files in matches:
+                            print(f"removing '{files}' file...")
+                            files.unlink()
                     elif os.path.isdir(rem):
                         print(f"file '{rem}' is a directory")
-                else:
-                    print(f"file '{file}' does not exist")
+                    else:
+                        print(f"no such file found in '{rem}'")
+                                
             except PermissionError:
                 print(f"you had no permission to remove '{rem}' file")
             except OSError as e:
@@ -410,7 +418,7 @@ class Shell:
                                 print(f"copying '{dstnt}' to '{dst}'...")
                                 shutil.copy(source, dstnt)
                             else:
-                                print(f'"{source}" does not exist, try with "<file/foldername>" if it has spaces')
+                                print(f"'{source}' does not exist, try with 'a<file/foldername>' if it has spaces")
                     else:
                         print(" specify the folder destination with '->'")
                 else:
@@ -444,7 +452,7 @@ class Shell:
             pygame.mixer.init()
             
             scr = pygame.display.set_mode((545, 300))
-            pygame.display.set_caption("SPACE -> pause/play, ESC -> quit")
+            pygame.display.set_caption("SPACE->pause/play, ESC->quit, left/right->rewind/forward")
 
             BG = (30, 30, 40)
             CT = (255, 255, 255)
@@ -461,16 +469,25 @@ class Shell:
 
             pause = False
             running = True
+            song_pos = 0.0
+            song_jump = 5.0
 
             clock = pygame.time.Clock()
 
             while running:
+                dt = clock.tick(60) / 1000.0
+
+                if pygame.mixer.music.get_busy():
+                    song_pos += dt
+
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
+                        print("video stopped")
                         running = False
 
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
+                            print("video stopped")
                             pygame.mixer.music.stop()
                             running = False
 
@@ -483,6 +500,19 @@ class Shell:
                                 pygame.mixer.music.pause()
                                 print("music paused")
                                 pause = True
+
+                        elif event.key == pygame.K_LEFT:
+                            song_pos -= song_jump
+                            if song_pos < 0:
+                                song_pos = 0.0
+                            pygame.mixer.music.set_pos(song_pos)
+                            print(f"rewinded song to: {song_pos:.1f} second")
+
+                        elif event.key == pygame.K_RIGHT:
+                            song_pos += song_jump
+                            pygame.mixer.music.set_pos(song_pos)
+                            print(f"forwarded song to: {song_pos:.1f} second")
+
                     scr.fill(BG)
                     scr.blit(TT, (150, 100))
                     scr.blit(TH, (50, 160))
@@ -589,6 +619,44 @@ class Shell:
         else:
             print(f"unknown expression: '{expression}', only use (x, +, -, and /)")
 
+    def SMILE(self, command):
+        try:
+            index_cam = " ".join(command[1:])
+            if len(index_cam) < 2:
+                print("use 'front' for front camera, and 'back' for back camera")
+            else:
+                index_cam = index_cam.replace("front", "0").replace("back", "1")
+                cap = cv2.VideoCapture(int(index_cam))
+                if not cap.isOpened():
+                    print("can't access camera")
+                    return                
+                else:
+                    img_count = 0
+                    while True:
+                        ret, frame = cap.read()
+
+                        if not ret:
+                            print("can't get the frames")
+                            break
+
+                        cv2.imshow("livecam: ESC -> exit, space -> take photo", frame)
+
+                        key =  cv2.waitKey(1) & 0xFF
+
+                        if key == 27:
+                            print("camera stopped")
+                            break
+                        elif key == 32:
+                            img_name = f"cv2_{img_count}.jpg"
+                            cv2.imwrite(img_name, frame)
+                            print(f"saved image '{img_name}' to disk")
+                            img_count += 1
+                        
+                    cap.release()
+                    cv2.destroyAllWindows()
+        except ValueError:
+            print("use 'front' for front camera, or 'back' for back camera")
+
     def Run_Command(self):
         try:
             command = self.Get_Input()
@@ -682,42 +750,7 @@ class Shell:
                 self.MATH(command)
 
             elif command[0] == "smile":
-                try:
-                    index_cam = " ".join(command[1:])
-                    if len(index_cam) < 2:
-                        print("use 'front' for front camera, and 'back' for back camera")
-                    else:
-                        index_cam = index_cam.replace("front", "0").replace("back", "1")
-                        cap = cv2.VideoCapture(int(index_cam))
-                        if not cap.isOpened():
-                            print("can't access camera")
-                            return                
-                        else:
-                            img_count = 0
-                            while True:
-                                ret, frame = cap.read()
-
-                                if not ret:
-                                    print("can't get the frames")
-                                    break
-
-                                cv2.imshow("livecam: ESC -> exit, space -> take photo", frame)
-
-                                key =  cv2.waitKey(1) & 0xFF
-
-                                if key == 27:
-                                    print("camera stopped")
-                                    break
-                                elif key == 32:
-                                    img_name = f"cv2_{img_count}.jpg"
-                                    cv2.imwrite(img_name, frame)
-                                    print(f"saved image '{img_name}' to disk")
-                                    img_count += 1
-                                
-                            cap.release()
-                            cv2.destroyAllWindows()
-                except ValueError:
-                    print("use 'front' for front camera, and 'back' for back camera")
+                self.SMILE(command)
 
         except TypeError:
             pass
