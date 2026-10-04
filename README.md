@@ -1,6 +1,6 @@
-# PYshell
-PYshell is a python-based shell that uses custom commands and can run an internal windows system commands (cmd and powershell) to make it more dinamic.  
+# PYshell  
 ## What is it
+PYshell is a python-based shell that uses custom commands and can run an internal windows system commands (cmd and powershell) to make it more dinamic.  
 PYshell has a varieties of linux-like command but made even more shorted. Example:
 ```
 ls/dir        -> lf
