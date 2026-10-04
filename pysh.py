@@ -1,7 +1,6 @@
 import sys
 import os
 import shutil
-from colorama import Fore, Style
 import getpass
 import psutil
 import subprocess
@@ -14,6 +13,11 @@ import time
 import glob
 import re
 import socket
+import cv2
+import argparse
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
 
 class Shell:
     def __init__(self):
@@ -33,11 +37,20 @@ class Shell:
             "exec", "pk", "pdk", "plist",
             "mf", "cf", "rf",
             "play",
-            "math"
+            "math",
+            "smile"
         ]
+        self.completer = WordCompleter(self.commands, ignore_case=True)
+        self.session = PromptSession()
 
     def Get_Input(self):
-        command = input(f"{Fore.GREEN}PYSH({os.getcwd()})>> {Style.RESET_ALL}").strip()
+        prompt_text = f"PYSH({os.getcwd()})>>"
+
+        try:
+            command = self.session.prompt(prompt_text, completer=self.completer).strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n")
+            return None
 
         if not command:
             return None
@@ -51,27 +64,69 @@ class Shell:
 
         return splitted
 
-    def LF(self):
-        folders = []
-        files = []
+    def LF(self, command):
+        try:
+            delimeter = ">"
+            if len(command) < 2 and delimeter not in command:
+                folders = []
+                files = []
 
-        for item in os.listdir('.'):
-            if os.path.isdir(item):
-                folders.append(f"{item}")
-            elif os.path.isfile(item):
-                files.append(f"{item}")
+                for item in os.listdir('.'):
+                    if os.path.isdir(item):
+                        folders.append(f"{item}")
+                    elif os.path.isfile(item):
+                        files.append(f"{item}")
 
-        print("files: ")
-        for file in files:
-            print(f" -{file}")
+                print("files: ")
+                for file in files:
+                    print(f" -{file}")
 
-        print()
+                print()
 
-        print("folders: ")
-        for folder in folders:
-            print(f" -{folder}")
-        
-        print()
+                print("folders: ")
+                for folder in folders:
+                    print(f" -{folder}")
+                
+                print()
+            elif len(command) > 1 and delimeter not in command:
+                print("specify the folder using '>'")
+            elif delimeter in command:
+                command = " ".join(command[1:])
+                folders = []
+                files = []
+                if delimeter in command:
+                    lf, fold = command.split(delimeter, 1)
+                    fold = fold.strip()
+
+                    folder_content = os.listdir(fold)
+                    abs_folder = os.path.abspath(fold)
+
+                    print(f"content of: '{abs_folder}'")
+                    
+                    for item in folder_content:
+                        path = os.path.join(fold, item)
+                        if os.path.isdir(path):
+                            folders.append(item)
+                        elif os.path.isfile(path):
+                            files.append(item)
+                    
+                    print("files: ")
+                    for file in files:
+                        print(f" -{file}")
+
+                    print()
+
+                    print("folders: ")
+                    for folder in folders:
+                        print(f" -{folder}")
+                    
+                    print()
+        except FileNotFoundError:
+            print(f"folder '{command}' does not exist")
+        except NotADirectoryError:
+            print(f"'{command}' is a file, not directory")
+        except OSError as e:
+            print(f"{e}")
 
     def WHO(self):
         comp_name = socket.gethostname()
@@ -84,7 +139,7 @@ class Shell:
 
     def MD(self, folder):
         if len(folder) < 2:
-            print("please specify a folder name to make")
+            print(" specify a folder name to make")
         else:
             for folders in folder[1:]:
                 if not os.path.exists(folders):
@@ -96,7 +151,7 @@ class Shell:
     def RD(self, folder):
         try:
             if len(folder) < 2:
-                print("please specify a folder to remove")
+                print(" specify a folder to remove")
             else:
                 for rfold in folder[1:]:
                     if os.path.exists(rfold):
@@ -109,7 +164,7 @@ class Shell:
 
     def CD(self, command):
         if len(command) < 2:
-            print("please specify a folder path")
+            print(" specify a folder path")
         else:
             full_path = " ".join(command[1:])
             try:
@@ -118,52 +173,76 @@ class Shell:
                 print(f"folder '{full_path}' does not exist")
             except PermissionError:
                 print(f"you had no permission to open '{full_path}' folder")
+            except OSError as e:
+                print(f"{e}")
 
     def REM(self, command):
-        try:
-            if len(command) < 2:
-                print("please specify a file to remove")
-            else:
-                for rem in command:
-                    if os.path.exists(rem) and os.path.isfile(rem):
+        to_remove = command[1:]
+
+        if not to_remove:
+            print(" specify a file to remove")
+            return
+
+        for rem in to_remove:
+            try:
+                if rem.startswith("*."):
+                    match = glob.glob(rem)
+                    if not match:
+                        print(f"no file that matches the pattern '{rem}'")
+                    else:
+                        yn = input(fr"remove all '{os.getcwd()}\{rem}'? (y/n)> ")
+                        if yn in ("y", "yes"):
+                            for file in match:
+                                try:
+                                    print(f"removing '{file}' file...")
+                                    os.remove(file)
+                                except PermissionError:
+                                    print(f"you had no permission to remove '{file}' file")
+                                except OSError as e:
+                                    print(f"{e}")
+                        else:
+                            return
+                elif os.path.exists(rem):
+                    if os.path.isfile(rem):
                         print(f"removing '{rem}' file...")
                         os.remove(rem)
-                    elif rem.startswith("*."):
-                        for file in glob.glob(f"*{rem}"):
-                            print(f"removing '{file}' file...")
-                            os.remove(file)
-        except FileNotFoundError:
-            print(f"file '{rem}' does not exist")
-        except IsADirectoryError:
-            print(f"file '{rem}' is a directory")
-        except PermissionError:
-            print(f"you had no permission to remove '{rem}' file")
+                    elif os.path.isdir(rem):
+                        print(f"file '{rem}' is a directory")
+                else:
+                    print(f"file '{file}' does not exist")
+            except PermissionError:
+                print(f"you had no permission to remove '{rem}' file")
+            except OSError as e:
+                print(f"{e}")
 
     def WRITE(self, command):
-        try:
-            if len(command) < 2:
-                print("WRITE SAY")
+        if len(command) < 2:
+            print("WRITE SAY")
+        else:
+            command = " ".join(command[1:])
+            delimiter = ">"
+            if delimiter in command:
+                content, filename = command.split(delimiter, 1)
+                con = content.strip()
+                file = filename.strip()
+                try:
+                    with open(file, "w") as f:
+                        f.write(con)
+                except IsADirectoryError:
+                    print(f"file '{filename}' is a directory")
+                except PermissionError:
+                    print(f"you had no permission to write '{filename}' file")
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    print(f"{e}")
             else:
-                command = " ".join(command[1:])
-                delimiter = ">"
-                if delimiter in command:
-                    content, filename = command.split(delimiter, 1)
-                    con = content.strip()
-                    file = filename.strip()
-                    try:
-                        with open(file, "w") as f:
-                            f.write(con)
-                    except Exception:
-                        pass
-                else:
-                    print(f"{command}")
-        except:
-            pass
+                print(f"{command}")
 
     def READ(self, command):
         try:
             if len(command) < 2:
-                print("please specify a file to read")
+                print(" specify a file to read")
             else:
                 for files in command[1:]:
                     with open(files, "rb") as f:
@@ -179,6 +258,8 @@ class Shell:
             print(f"you had no permission to read '{files}' file")
         except IsADirectoryError:
             print(f"file '{files}' is a directory")
+        except OSError as e:
+            print(f"{e}")
 
     def PLIST(self):
         print("PIDS     |              NAME              |   STATUS  |")
@@ -192,24 +273,58 @@ class Shell:
         print("=======================================================")
 
     def EXEC(self, command):
+        arg = command[1:]
+
+        parse = argparse.ArgumentParser(add_help=False)
+
+        parse.add_argument('-ims', '--immediate', action='store_true', dest='immediate')
+        parse.add_argument('-k', '--keep', action='store_true', dest='keep')
+        parse.add_argument('-s', type=int, default=None, dest='seconds')
+        
         try:
-            if len(command) < 2:
-                print("specify a program name to execute with")
+            parsed, unknown = parse.parse_known_args(arg)
+            unknown = unknown
+
+            if not unknown:
+                print("specify a program to execute")
+                return
+
+            CREATE_NEW_CONSOLE = 0x00000010
+
+            if parsed.immediate:
+                sec = parsed.seconds if parsed.seconds is not None else 5
+
+                process = subprocess.Popen(["cmd.exe", "/k"] + unknown, 
+                                        creationflags=CREATE_NEW_CONSOLE, 
+                                        stdout=None, stderr=None, stdin=None)
+                time.sleep(sec)
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
+            elif parsed.keep:
+                if parsed.seconds is not None:
+                    print("skipping '-s' since keep is running")
+                process = subprocess.Popen(["cmd.exe", "/k"] + unknown, 
+                                        creationflags=CREATE_NEW_CONSOLE, 
+                                        stdout=None, stderr=None, stdin=None)
             else:
-                CREATE_NEW_CONSOLE = 0x00000010
-                subprocess.Popen(command[1:], creationflags=CREATE_NEW_CONSOLE, 
-                                stdout=None,
-                                stderr=None,
-                                stdin=None)
+                if parsed.seconds is not None:
+                    print("skipping '-s' since keep is running")
+
+                print("wrong option, only use:\n"
+                      " '-ims' or '--immediate' to immediately close terminal after 5 seconds\n"
+                      " '-k' or '--keep' to not immediately close terminal\n"
+                      " '-s' to specify the seconds of how long the terminal would appear\n"
+                      " Usage: exec <option> <program_name> ('-s <seconds>' only use with '-ims' or '--immediate')")
+        except SystemExit:
+            print("failed to launch program, due to structural code or options format")
         except FileNotFoundError:
-            print(f"program '{command[1]}' does not exist")
+            print(f"program does not exist")
         except OSError:
-            print(f"failed to launch program '{command[1]}', maybe missing keywords or untrue condition")
+            print(f"failed to launch program, maybe missing keywords or untrue condition")
 
     def PK(self, command):
         found = False
         if len(command) < 2:
-            print("please specify an image name to kill")
+            print(" specify an image name to kill")
         else:
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
@@ -229,7 +344,7 @@ class Shell:
     def PDK(self, command):
         try:
             if len(command) < 2:
-                print("please specify a pid name to kill")
+                print(" specify a pid name to kill")
             else:
                 command = int(command[1])
                 process = psutil.Process(command)
@@ -248,7 +363,7 @@ class Shell:
     def MF(self, command):
         try:
             if len(command) < 2:
-                print("please specify a folder/file name to move into destinated folder")
+                print(" specify a folder/file name to move into destinated folder")
             else:
                 command = " ".join(command[1:])
                 delimiter = "->"
@@ -268,16 +383,16 @@ class Shell:
                             else:
                                 print(f'"{source}" does not exist, try with "<file/foldername>" if it has spaces')
                     else:
-                        print("please specify the folder destination with '->'")
+                        print(" specify the folder destination with '->'")
                 else:
-                    print("please specify the folder destination with '->'")
+                    print(" specify the folder destination with '->'")
         except:
             pass
 
     def CF(self, command):
         try:
             if len(command) < 2:
-                print("please specify a folder/file name to copy into destined folder")
+                print(" specify a folder/file name to copy into destined folder")
             else:
                 command = " ".join(command[1:])
                 delimiter = "->"
@@ -297,9 +412,9 @@ class Shell:
                             else:
                                 print(f'"{source}" does not exist, try with "<file/foldername>" if it has spaces')
                     else:
-                        print("please specify the folder destination with '->'")
+                        print(" specify the folder destination with '->'")
                 else:
-                    print("please specify the folder destination with '->'")
+                    print(" specify the folder destination with '->'")
         except:
             pass
 
@@ -443,7 +558,7 @@ class Shell:
     def is_file_audio_or_video(self, command):
         try:
             if len(command) < 2:
-                print("please specify an audio/video file to play")
+                print(" specify an audio/video file to play")
             else:
                 command = " ".join(command[1:])
                 mime = magic.from_file(command, mime=True)
@@ -503,17 +618,17 @@ class Shell:
                 -exec      --> run internal windows system cmd/powershell only commands
                 -plist     --> list programs
                 -pk/pdk    --> kill a program by (pk: image_name) or (pdk: pid_name)
-                -cf/mf     --> copy (cf) or move (mf) a file into a specified folder (with '->')
+                -cf/mf     --> copy (cf) or move (mf) a file/foler into the specified folder (with '->')
                 -play      --> play a video/audio file
                 -math      --> calculate numbers directly on terminal
-                -confip    --> configure local ip address
+                -smile     --> open camera and take a picture (use 'front' for front camera and 'back' for back camera)
                 """'''.strip('"'))
 
             elif command[0] == "who?":
                 self.WHO()
 
             elif command[0] == "lf":
-                self.LF()
+                self.LF(command)
 
             elif command[0] == "pd":
                 self.PD()
@@ -566,6 +681,44 @@ class Shell:
             elif command[0] == "math":
                 self.MATH(command)
 
+            elif command[0] == "smile":
+                try:
+                    index_cam = " ".join(command[1:])
+                    if len(index_cam) < 2:
+                        print("use 'front' for front camera, and 'back' for back camera")
+                    else:
+                        index_cam = index_cam.replace("front", "0").replace("back", "1")
+                        cap = cv2.VideoCapture(int(index_cam))
+                        if not cap.isOpened():
+                            print("can't access camera")
+                            return                
+                        else:
+                            img_count = 0
+                            while True:
+                                ret, frame = cap.read()
+
+                                if not ret:
+                                    print("can't get the frames")
+                                    break
+
+                                cv2.imshow("livecam: ESC -> exit, space -> take photo", frame)
+
+                                key =  cv2.waitKey(1) & 0xFF
+
+                                if key == 27:
+                                    print("camera stopped")
+                                    break
+                                elif key == 32:
+                                    img_name = f"cv2_{img_count}.jpg"
+                                    cv2.imwrite(img_name, frame)
+                                    print(f"saved image '{img_name}' to disk")
+                                    img_count += 1
+                                
+                            cap.release()
+                            cv2.destroyAllWindows()
+                except ValueError:
+                    print("use 'front' for front camera, and 'back' for back camera")
+
         except TypeError:
             pass
         except KeyboardInterrupt:
@@ -574,5 +727,8 @@ class Shell:
 
 print("PYSH shell terminal (c) average-joe44")
 print("type 'help' for more help!")
+
+pysh = Shell()
+
 while True:
-    Shell().Run_Command()
+    pysh.Run_Command()
