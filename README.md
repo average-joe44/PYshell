@@ -16,4 +16,5 @@ The Custom-added features including:
 play  -> for playing either video or audio file
 math  -> directly do and solve math problems on the terminal
 exec  -> execute windows system commands and programs
+smile -> open camera to capture photo with space button
 ```
