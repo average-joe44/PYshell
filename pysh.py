@@ -16,9 +16,9 @@ import socket
 import cv2
 import argparse
 import pathlib
-
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
+import struct
+import threading
+import rsa
 
 class Shell:
     def __init__(self):
@@ -39,19 +39,21 @@ class Shell:
             "mf", "cf", "rf",
             "play",
             "math",
-            "smile"
+            "smile",
+            "sendfile", "recvfile",
+            "chat"
         ]
-        self.completer = WordCompleter(self.commands, ignore_case=True)
-        self.session = PromptSession()
+        
+        self.running_chat_socket = True
+        self.sock_chat = None
+
+        self.public_key, self.private_key = rsa.newkeys(1024)
+        self.public_partner = None
 
     def Get_Input(self):
         prompt_text = f"PYSH({os.getcwd()})>>"
 
-        try:
-            command = self.session.prompt(prompt_text, completer=self.completer).strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\n")
-            return None
+        command = input(prompt_text)
 
         if not command:
             return None
@@ -206,17 +208,27 @@ class Shell:
                         else:
                             return
                 else:
-                    root_path = pathlib.Path.cwd()
-                    matches = [p for p in root_path.rglob(rem) if p.is_file()]
-
-                    if matches:
-                        for files in matches:
-                            print(f"removing '{files}' file...")
-                            files.unlink()
-                    elif os.path.isdir(rem):
-                        print(f"file '{rem}' is a directory")
+                    abs_path = pathlib.Path(rem)
+                    if abs_path.is_absolute():
+                        if abs_path.is_file():
+                            print(f"removing '{abs_path}' file...")
+                            abs_path.unlink()
+                        elif abs_path.is_dir():
+                            print(f"file '{abs_path}' is a directory")
+                        else:
+                            print(f"no such file found: {abs_path}")
                     else:
-                        print(f"no such file found in '{rem}'")
+                        root_path = pathlib.Path.cwd()
+                        matches = [p for p in root_path.rglob(rem) if p.is_file()]
+
+                        if matches:
+                            for files in matches:
+                                print(f"removing '{files}' file...")
+                                files.unlink()
+                        elif os.path.isdir(rem):
+                            print(f"file '{rem}' is a directory")
+                        else:
+                            print(f"no such file found: '{rem}'")
                                 
             except PermissionError:
                 print(f"you had no permission to remove '{rem}' file")
@@ -657,6 +669,360 @@ class Shell:
         except ValueError:
             print("use 'front' for front camera, or 'back' for back camera")
 
+    def recv_all(self, sock,  n):
+        data = bytearray()
+        while len(data) < n:
+            packet = sock.recv(n - len(data))
+            if not packet:
+                return None
+            data.extend(packet)
+        return bytes(data)
+
+    def SEND_FILE(self, command):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        delimiter = ">"
+        delimiter_ip_port = "-"
+        client = " ".join(command[1:])
+        if delimiter in client:
+            if delimiter_ip_port in client:
+                file, ip = client.split(delimiter, 1)
+                ip, port = ip.split(delimiter_ip_port, 1)
+                try:
+                    file = file.strip()
+                    ip = ip.strip()
+                    port = int(port.strip())
+                except ValueError:
+                    print("port must be integer or not empty")
+                    return
+                
+                print(f"connecting to {ip}:{str(port)}")
+                
+                try:
+                    sock.connect((ip, port))
+                except socket.gaierror:
+                    print("can't resolve hostname: hostname typed incorrectly")
+                    return
+                except ConnectionRefusedError:
+                    print("the host you are trying to connect to is inactive or refused the connection")
+                    return
+                except socket.timeout:
+                    print("the host you are trying to connect to is timed out")
+                except socket.error as e:
+                    print(f"{e}")
+                    return
+                
+                buff = 65536
+
+                if not os.path.exists(file) or os.path.isdir(file):
+                    try:
+                        sock.sendall(struct.pack("Q", 0))
+                    except:
+                        pass
+                    print(f"file '{file}' does not exist")
+                    return
+                
+                filesize = os.path.getsize(filename=file)
+
+                try:
+                    sock.sendall(struct.pack("Q", filesize))
+                except:
+                    print("can't send the file size: host is inactive/refused connection")
+                    return
+
+                try:
+                    with open(file, "rb") as f:
+                        print(f"sending file '{file}'...")
+                        while True:
+                            try:
+                                data = f.read(buff)
+                                if not data:
+                                    break
+                                sock.sendall(data)
+                                print(f'sending... {f.tell()}/{filesize} bytes ({f.tell()/filesize*100:.2f}%)', end='\r')
+                            except KeyboardInterrupt:
+                                print("\nstopped by user request")
+                                break
+                        print(f"\nsuccessfully sended file '{file}'")
+                except PermissionError:
+                    print(f"you have no permission to open and send '{file}' file")
+                except socket.error as e:
+                    print(f"{e}")
+            else:
+                print("specify the ip and port using '-' (<filename> > <ip> - <port>)")
+        else:
+            print("specify the filename to ip and port using '>' (<filename> > <ip> - <port>)")
+
+    def RECV_FILE(self, command):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        filename = " ".join(command[1:])
+        delimiter = ">"
+        delimiter_ip_port = "-"
+        if delimiter in filename:
+            if delimiter_ip_port in filename:
+                file, ip = filename.split(delimiter, 1)
+                ip, port = ip.split(delimiter_ip_port, 1)
+                try:
+                    file = file.strip()
+                    ip = ip.strip()
+                    port = int(port.strip())
+                except ValueError:
+                    print("port must be integer or not empty")
+                    return
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.bind((ip, port))
+                except socket.gaierror:
+                    print("can't resolve hostname: hostname might be typed incorrectly")
+                except OSError as e:
+                    if e.errno == 98 or e.errno == 10048:
+                        print(f"port '{port}' is being used by other application")
+                    else:
+                        print(f"{e}")
+                    return
+
+                print(f"listening for connection at {ip}:{str(port)}")
+                sock.listen(1)
+                
+                try:
+                    conn, addr = sock.accept()
+                    print(f"accepted connection from {addr}")
+                except socket.error as e:
+                    print(f"{e}")
+                    return
+                
+                with conn:
+                    buff = 65536
+                    try:
+                        size = self.recv_all(conn, 8)
+                        if not size:
+                            print("connection closed before sending filesize")
+                            return
+
+                        filesize = struct.unpack("Q", size)[0]
+
+                        if filesize == 0:
+                            print("the file that is about to be received is a directory or is not exist")
+                            return
+
+                        recv = 0
+                        with open(file, "wb") as f:
+                            print("receiving...")
+                            while recv < filesize:
+                                try:
+                                    to_read = min(buff, filesize - recv)
+                                    data = conn.recv(to_read)
+                                    if not data:
+                                        break
+                                    f.write(data)
+                                    recv += len(data)
+                                    print(f"receiving... {recv}/{filesize} bytes ({recv/filesize*100:.2f}%)'", end='\r')
+                                except KeyboardInterrupt:
+                                    print("\nstopped by user request")
+                                    break
+                            if recv == filesize:
+                                print(f"\nsuccessfully received file '{file}'")
+                            else:
+                                print(f"\nsuccessfully received file '{file}' (file might be corrupted): {recv}/{filesize} bytes")
+                    except PermissionError:
+                        print(f"you had no permission to receive and write '{file}' file")
+                    except socket.error as e:
+                        print(f"{e}")
+            else:
+                print("specify the ip and port using '-' (<filename> > <ip> - <port>)")
+        else:
+            print("specify the filename to ip and port using '>' (<filename> > <ip> - <port>)")
+
+    def SEND_MSG(self, sock):
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        print("\ntype 's_exit' to exit")
+        try:
+            while self.running_chat_socket:
+                try:
+                    with patch_stdout():
+                        msg = input("chat> ").strip()
+
+                    if not self.running_chat_socket:
+                        break
+                    
+                    if not msg:
+                        continue
+
+                    if msg.lower() == "s_exit":
+                        print("\nclosing chat")
+                        self.running_chat_socket = False
+                        try:
+                            sock.shutdown(socket.SHUT_RDWR)
+                        except:
+                            pass
+                        return
+
+                    if not self.public_partner:
+                        print("\nno public partner key available")
+                        break
+
+                    msg_byte = msg.encode()
+                    if len(msg_byte) > 117:
+                        print("\nthe limit of rsa 1024 byte encryption is 117 byte per-message")
+                        continue
+
+                    sock.send(rsa.encrypt(msg_byte, self.public_partner))
+                    print(f"\nyou: '{msg}'")
+                except rsa.OverflowError:
+                    print("\nmessage length exceeds encryption limit")
+                except (socket.error, BrokenPipeError, OSError):
+                    self.running_chat_socket = False
+                    break
+                except (KeyboardInterrupt, EOFError, RuntimeError):
+                    self.running_chat_socket = False
+                    break
+        finally:
+            self.running_chat_socket = False
+
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
+    
+    def RECV_MSG(self, sock):
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        while self.running_chat_socket:
+            try:
+                data = sock.recv(1024)
+                if not data:
+                    with patch_stdout():
+                        print("\nchat closed connection")
+                    self.running_chat_socket = False
+                    break
+                data = rsa.decrypt(data, self.private_key)
+                data = data.decode()
+
+                with patch_stdout():
+                    print(f"\nclient: {data}")
+
+            except rsa.DecryptionError:
+                with patch_stdout():
+                    print("\nfailed to decrypt message")
+            except (socket.error, OSError):
+                self.running_chat_socket = False
+                break
+            
+        self.running_chat_socket = False
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+
+    def CHAT(self, command):
+        self.sock_chat = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        option = " ".join(command[1:])
+        host = "host"
+        connect = "connect"
+
+        if host in option:
+            choice_ip = input("(enter your ip address or type 'global' for global hosting)> ")
+
+            if not choice_ip:
+                print("specify the ip first")
+                return
+            
+            choice_port = input("(enter your port)> ")
+
+            if not choice_port:
+                print("specify the port")
+                return
+            
+            if choice_ip == "global":
+                choice_ip = "0.0.0.0"
+            try:
+                self.sock_chat.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.sock_chat.bind((choice_ip, int(choice_port)))
+            except socket.gaierror:
+                print("can't resolve hostname: hostname might be typed incorrectly")
+            except OSError as e:
+                if e.errno == 98 or e.errno == 10048:
+                    print(f"port '{str(choice_port)}' is being used by other application")
+                else:
+                    print(f"{e}")
+                return
+
+            print(f"listening for connection at: '{choice_ip}:{str(choice_port)}'")
+            self.sock_chat.listen(1)
+            
+            try:
+                sock, addr = self.sock_chat.accept()
+                sock.sendall(self.public_key.save_pkcs1(format="PEM"))
+                self.public_partner = rsa.PublicKey.load_pkcs1(sock.recv(1024))
+                print(f"accepted connection from: {addr}")
+            except socket.error as e:
+                print(f"{e}")
+                return
+
+        elif connect in option:
+            choice_ip = input("(enter the ip address you want to connect to)> ")
+
+            if not choice_ip:
+                print("specify the ip first")
+                return
+
+            choice_port = input("(enter the port)> ")
+
+            if not choice_port:
+                print("specify the port")
+                return
+            
+            print(f"connecting to: {choice_ip}:{str(choice_port)}")
+            
+            try:
+                sock = self.sock_chat
+                sock.connect((choice_ip, int(choice_port)))
+                self.public_partner = rsa.PublicKey.load_pkcs1(sock.recv(1024))
+                sock.sendall(self.public_key.save_pkcs1(format="PEM"))
+            except socket.gaierror:
+                print("can't resolve hostname: hostname typed incorrectly")
+                return
+            except ConnectionRefusedError:
+                print("the host you are trying to connect to is inactive or refused the connection")
+                return
+            except socket.timeout:
+                print("the host you are trying to connect to is timed out")
+            except socket.error as e:
+                print(f"{e}")
+                return
+
+            print(f"connected to: {choice_ip}:{str(choice_port)}")
+        else:
+            print("use 'host' to host a chat or 'connect' to connect to host")
+            return
+
+        self.running_chat_socket = True
+
+        t1 = threading.Thread(target=self.SEND_MSG, args=(sock,), daemon=True)
+        t2 = threading.Thread(target=self.RECV_MSG, args=(sock,), daemon=True)
+
+        t1.start()
+        t2.start()
+
+        try:
+            while self.running_chat_socket:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            self.running_chat_socket = False
+
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+
+        t1.join(timeout=1.0)
+        t2.join(timeout=0.5)
+
+        try:
+            sock.close()
+        except:
+            pass
+
     def Run_Command(self):
         try:
             command = self.Get_Input()
@@ -669,27 +1035,30 @@ class Shell:
                 sys.exit()
 
             elif command[0] == "help":
-                print("help:")
                 print('''"""
-                -help      --> help
-                -exit/quit --> exit the shell
-                -clear     --> clear the terminal screen
-                -lf        --> list the files/folders in a folder
-                -pd        --> print the current working directory
-                -who?      --> shows the current user name
-                -md/rd     --> make(md) or remove(rd) directories
-                -rf        --> rename a directory or a file
-                -cd        --> change the working directory
-                -rem       --> remove file(s)
-                -write     --> print a text or pipe a text (with '>') into a file
-                -read      --> read and print the content of a file(s)
-                -exec      --> run internal windows system cmd/powershell only commands
-                -plist     --> list programs
-                -pk/pdk    --> kill a program by (pk: image_name) or (pdk: pid_name)
-                -cf/mf     --> copy (cf) or move (mf) a file/foler into the specified folder (with '->')
-                -play      --> play a video/audio file
-                -math      --> calculate numbers directly on terminal
-                -smile     --> open camera and take a picture (use 'front' for front camera and 'back' for back camera)
+help:
+ -help      --> help
+ -exit/quit --> exit the shell
+ -clear     --> clear the terminal screen
+ -lf        --> list the files/folders in a folder
+ -pd        --> print the current working directory
+ -who?      --> shows the current user name
+ -md/rd     --> make(md) or remove(rd) directories
+ -rf        --> rename a directory or a file
+ -cd        --> change the working directory
+ -rem       --> remove file(s)
+ -write     --> print a text or pipe a text (with '>') into a file
+ -read      --> read and print the content of a file(s)
+ -exec      --> run internal windows system cmd/powershell only commands
+ -plist     --> list programs
+ -pk/pdk    --> kill a program by (pk: image_name) or (pdk: pid_name)
+ -cf/mf     --> copy (cf) or move (mf) a file/folder into the specified folder (with '->')
+ -play      --> play a video/audio file
+ -math      --> calculate numbers directly on terminal
+ -smile     --> open camera and take a picture (use 'front' for front camera and 'back' for back camera)
+ -sendfile  --> send local file directly to host (host must be active and listening for connection)
+ -recvfile  --> recv remote file from client (client must send a singular file with same extension and not a directory)
+ -chat      --> chat with someone in an encrypted tcp socket on terminal
                 """'''.strip('"'))
 
             elif command[0] == "who?":
@@ -751,6 +1120,15 @@ class Shell:
 
             elif command[0] == "smile":
                 self.SMILE(command)
+
+            elif command[0] == "sendfile":
+                self.SEND_FILE(command)
+
+            elif command[0] == "recvfile":
+                self.RECV_FILE(command)
+
+            elif command[0] == "chat":
+                self.CHAT(command)
 
         except TypeError:
             pass
