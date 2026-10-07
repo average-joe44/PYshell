@@ -710,6 +710,9 @@ class Shell:
                 except socket.error as e:
                     print(f"{e}")
                     return
+                except OverflowError:
+                    print("port must be 1-65535")
+                    return
                 
                 buff = 65536
 
@@ -778,6 +781,9 @@ class Shell:
                         print(f"port '{port}' is being used by other application")
                     else:
                         print(f"{e}")
+                    return
+                except OverflowError:
+                    print("port must be 1-65535")
                     return
 
                 print(f"listening for connection at {ip}:{str(port)}")
