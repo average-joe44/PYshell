@@ -946,9 +946,22 @@ class Shell:
                 else:
                     print(f"{e}")
                 return
+            except ValueError:
+                print("the port must be integer or not empty")
+                return
+            except OverflowError:
+                print("port must be 1-65535")
+                return
 
-            print(f"listening for connection at: '{choice_ip}:{str(choice_port)}'")
-            self.sock_chat.listen(1)
+            try:
+                print(f"listening for connection at: '{choice_ip}:{str(choice_port)}'")
+                self.sock_chat.listen(1)
+            except OSError as e:
+                if e.errno == 10022:
+                    print(f"the ip is wrong, check the typing")
+                else:
+                    print(f"{e}")
+                return
             
             try:
                 sock, addr = self.sock_chat.accept()
@@ -989,6 +1002,15 @@ class Shell:
                 print("the host you are trying to connect to is timed out")
             except socket.error as e:
                 print(f"{e}")
+                return
+            except ValueError:
+                print("the port must be integer or not empty")
+                return
+            except OSError as e:
+                print(f"{e}")
+                return
+            except OverflowError:
+                print("port must be 1-65535")
                 return
 
             print(f"connected to: {choice_ip}:{str(choice_port)}")
